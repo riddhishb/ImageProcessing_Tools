@@ -1,0 +1,123 @@
+
+import cv2
+import numpy as np
+
+# table of [luminance, chrominance, chrominance]
+std_quant_tbl = [
+  [
+  [16,  11,  10,  16,  24,  40,  51,  61],
+  [12,  12,  14,  19,  26,  58,  60,  55],
+  [14,  13,  16,  24,  40,  57,  69,  56],
+  [14,  17,  22,  29,  51,  87,  80,  62],
+  [18,  22,  37,  56,  68, 109, 103,  77],
+  [24,  35,  55,  64,  81, 104, 113,  92],
+  [49,  64,  78,  87, 103, 121, 120, 101],
+  [72,  92,  95,  98, 112, 100, 103,  99]
+  ],
+  [
+  [17,  18,  24,  47,  99,  99,  99,  99],
+  [18,  21,  26,  66,  99,  99,  99,  99],
+  [24,  26,  56,  99,  99,  99,  99,  99],
+  [47,  66,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99]
+  ],
+  [
+  [17,  18,  24,  47,  99,  99,  99,  99],
+  [18,  21,  26,  66,  99,  99,  99,  99],
+  [24,  26,  56,  99,  99,  99,  99,  99],
+  [47,  66,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99],
+  [99,  99,  99,  99,  99,  99,  99,  99]
+  ]
+]
+
+def JPEG_DCT(imgfile):
+    # 3 channels x 8 bits, indexed-colors
+    img = cv2.imread(imgfile, cv2.CV_LOAD_IMAGE_COLOR)
+    wndName = "original indexed-color"
+    cv2.namedWindow(wndName, cv2.WINDOW_AUTOSIZE)
+    cv2.imshow(wndName, img)
+
+    iHeight, iWidth = img.shape[:2]
+    print "size:", iWidth, "x", iHeight
+
+    # set size to multiply of 8
+    if (iWidth % 8) != 0:
+        filler = img[:,iWidth-1:,:]
+        #print "width filler size", filler.shape
+        for i in range(8 - (iWidth % 8)):
+            img = np.append(img, filler, 1)
+
+    if (iHeight % 8) != 0:
+        filler = img[iHeight-1:,:,:]
+        #print "height filler size", filler.shape
+        for i in range(8 - (iHeight % 8)):
+            img = np.append(img, filler, 0)
+
+    iHeight, iWidth = img.shape[:2]
+    print "new size:", iWidth, "x", iHeight
+
+    # convert to YCrCb, Y=luminance, Cr/Cb=red/blue-difference chrominance
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
+
+    # array as storage for DCT + quant.result
+    img2 = np.empty(shape=(iHeight, iWidth, 3))
+
+    # FORWARD ----------------
+    # do calc. for each 8x8 non-overlapping blocks
+    cv2.imshow("dctimage",img2)
+    for startY in range(0, iHeight, 8):
+        for startX in range(0, iWidth, 8):
+            for c in range(0, 3):
+                block = img[startY:startY+8, startX:startX+8, c:c+1].reshape(8,8)
+
+                # apply DCT for a block
+                blockf = np.float32(block)     # float conversion
+                dst = cv2.dct(blockf)          # dct
+                  
+                # quantization of the DCT coefficients
+                blockq = np.around(np.divide(dst, std_quant_tbl[c]))
+                blockq = np.multiply(blockq, std_quant_tbl[c])
+
+                # store the result
+                for y in range(8):
+                    for x in range(8):
+                        img2[startY+y, startX+x, c] = blockq[y, x]
+
+
+    
+    # INVERSE ----------------
+    for startY in range(0, iHeight, 8):
+        for startX in range(0, iWidth, 8):
+            for c in range(0, 3):
+                block = img2[startY:startY+8, startX:startX+8, c:c+1].reshape(8,8)
+               
+                blockf = np.float32(block)     # float conversion
+                dst = cv2.idct(blockf)         # inverse dct
+                np.place(dst, dst>255.0, 255.0)     # saturation
+                np.place(dst, dst<0.0, 0.0)         # grounding 
+                block = np.uint8(np.around(dst)) 
+
+                # store the results
+                for y in range(8):
+                    for x in range(8):
+                        img[startY+y, startX+x, c] = block[y, x]
+
+    print img.dtype
+    # convert to BGR
+    img = cv2.cvtColor(img, cv2.COLOR_YCR_CB2BGR)
+    
+    wndName1 = "DCT + quantization + inverseDCT"
+    cv2.namedWindow(wndName1, cv2.WINDOW_AUTOSIZE)
+    cv2.imshow(wndName1, img)
+    cv2.waitKey(0)
+    cv2.destroyWindow(wndName1)
+    cv2.destroyWindow(wndName)
+
+if __name__ == "__main__":
+    JPEG_DCT("4.jpg")
