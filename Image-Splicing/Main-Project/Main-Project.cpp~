@@ -1,0 +1,242 @@
+
+# include "opencv2/highgui/highgui.hpp"
+# include "opencv2/imgproc/imgproc.hpp"
+# include "opencv2/core/core.hpp"
+
+# include <iostream>
+# include <stdio.h>
+# include <math.h>
+
+using namespace cv;
+using namespace std;
+
+/*////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+1) 32x32 overlapping local windows. Each window will have 63 channels corrosponding to 8x8 DCT kernal
+2) Estimate the image for each channel.
+3) Compute 4 image moments for each of the K channels
+4) Compute the varience and Kurtosis for each local window for each channel
+5) Estimate local variences for each of the local windows
+*////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+double moment1(int input[32][32]){
+    double sum = 0;
+    for(int k=0;k<32;k++){
+        for(int kk=0;kk<32;kk++){
+            sum = sum + input[k][kk];
+        }
+    }
+    sum = sum/(32*32);
+    return sum;
+}
+
+double moment2(int input[32][32]){
+    double sum = 0;
+    for(int k=0;k<32;k++){
+        for(int kk=0;kk<32;kk++){
+            sum = sum + (input[k][kk])*(input[k][kk]);
+        }
+    }
+    sum = sum/(32*32);
+    return sum;
+}
+
+double moment3(int input[32][32]){
+    double sum = 0;
+    for(int k=0;k<32;k++){
+        for(int kk=0;kk<32;kk++){
+            sum = sum + (input[k][kk])*(input[k][kk])*(input[k][kk]);
+
+        }
+    }
+    sum = sum/(32*32);
+    return sum;
+}
+
+double moment4(int input[32][32]){
+    double sum = 0;
+    for(int k=0;k<32;k++){
+        for(int kk=0;kk<32;kk++){
+            sum = sum + (input[k][kk])*(input[k][kk])*(input[k][kk])*(input[k][kk]);
+        }
+    }
+    sum = sum/(32*32);
+    return sum;
+}
+// Kurtosis Computation
+double compute_kurtosis(double mu1, double mu2, double mu3, double mu4){
+    double kurt;
+    kurt = mu4 - 4*mu3*mu1 + 6*mu2*mu1*mu1 - 3*mu1*mu1*mu1*mu1;
+    kurt = kurt/(mu2*mu2 - 2*mu2*mu1*mu1 + mu1*mu1*mu1*mu1);
+    kurt = kurt - 3;
+    return kurt;
+}
+// Varience Computation
+double compute_variance(double mu1, double mu2){
+    double var;
+    var = mu2 - mu1*mu1;
+    return var;
+}
+/*
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// The Main Function
+int main()
+{
+// Step 1 to divede the image into 8x8 DCT decomposition windows and hence K=63
+// divide into 32x32 windows and then do the 8x8 window division and perform DCT decomposition
+
+Mat img_input;
+img_input = imread("new1.jpg",1);
+cvtColor(img_input,img_input,CV_BGR2GRAY);
+int totrows = img_input.rows;
+int totcols = img_input.cols;
+cout << totcols << totrows<<endl;;
+// now we need 32x32 overlapping windows for the image
+double avg_factor_main = 0;
+
+
+// the array for the noise varience of the final output, this is going to be used in the K means algorithm which we are going to apply
+Mat output = Mat::zeros(img_input.size(),img_input.type());
+
+for(int r=0;r<totrows-32;r++){
+        cout<<r<<endl;
+    for(int c=0;c<totcols-32;c++){
+        Mat window_img = img_input(cv::Rect(c,r,32,32)); // the first window of 32x32
+                
+        Mat temp8 = Mat::zeros(8,8, window_img.type());
+        
+        // this represents the stack of 64 images in each local window
+        double local_channels[32][32][64] ;
+        int k = 64;
+        double avg_factor=0;
+        double m[k];
+
+        // a local window analysis starts
+        for(int i = 0;i<25;i++){
+            for(int j = 0;j<25;j++){
+                
+                temp8 = window_img(cv::Rect(i,j,8,8));
+                temp8.convertTo(temp8, CV_64F);
+              //  cout << temp8.type();
+                //cout<<"BITCH"<<endl;
+                // DCT of the window here
+                dct(temp8,temp8,0);
+                
+                // Mat to uchar array
+               
+                for(int l=0;l<8;l++){ 
+                    for(int n=0;n<8;n++){
+                    m[l*n] = temp8.at<double>(l,n); 
+                    }
+                }
+                // The 1st channel is redundent as it is the DC component
+                for(int ii=i;ii<i+8;ii++){
+                    for(int jj=j;jj<j+8;jj++){
+                        
+                        //averaging factor
+                        avg_factor = min(64,min((ii+1)*(jj+1),(32-ii)*(32-jj)));
+                         
+                         for(k = 0;k<64;k++){    
+                            local_channels[ii][jj][k] = local_channels[ii][jj][k] + m[k]/avg_factor; 
+                        }
+                        
+                    }
+                }
+            }
+        }
+        //Now we process this window through the desired functions
+        int temp[32][32];
+        double m1,m2,m3,m4;
+        double kurt[63];
+        double var[63];
+        // The average terms required for the computa
+        double com1=0,com2=0,com3=0,com4=0;
+        for(int k=1;k<64;k++){
+        // all 63 AC channels, compute an image for each of them first
+            for(int i=0;i<32;i++){
+                for(int j=0;j<32;j++){
+                    temp[i][j] = local_channels[i][j][k];
+                }
+            }
+            // compute all the moments
+            m1 = moment1(temp);
+            m2 = moment2(temp);
+            m3 = moment3(temp);
+            m4 = moment4(temp);
+            // Now estimating the kurtosis and varience of the channel for this local window
+            var[k-1] = compute_variance(m1,m2);
+            kurt[k-1] = compute_kurtosis(m1,m2,m3,m4);
+
+            // sqrt of kurtosis
+            com1 = com1 + sqrt(kurt[k-1]);
+            //1/varience
+            com2 = com2 + (1/var[k-1]);
+            // 1/varience^2
+            com3 = com3 + (1/((var[k-1])*(var[k-1])));
+            // sqrt of kurtosis/var
+            com4 = com4 + (sqrt(kurt[k-1])/(var[k-1]));
+        }
+
+        com1 = com1/63;
+        com2 = com2/63;
+        com3 = com3/63;
+        com4 = com4/63;
+
+        // Now the estimation of noise variance in the local window
+        double kurtosis = 0;
+        double variance = 0;
+
+        kurtosis = com1*com3 - com2*com4;
+        kurtosis = com3 - com2*com2;
+
+        // this is the thing
+        variance = (1/com2) - (1/kurtosis)*(com1/com2);
+
+        for(int ii=r;ii<r+32;ii++){
+            for(int jj=c;jj<c+32;jj++){
+                
+                avg_factor = min(min(32*32,(ii+1)*(jj+1)),(totrows-ii)*(totcols-jj));        
+                output.at<uchar>(ii,jj) = output.at<uchar>(ii,jj) + variance/avg_factor_main;                       
+            }
+        }
+//cout<<c<<endl;
+    }
+}
+
+// The final 2d array with noise variences is the output
+// Now we apply K means with the feature vector as
+// (variance,i,j)
+// and we divide it into two sections
+// then we get the splicing result
+
+// The data input for K means an feature array which is  coloumns and imagesized rows.
+
+double in_kmeans[totcols*totrows][3] ;
+for(int i=0;i<totrows;i++){
+    for (int j = 0; j < totcols; j++){
+        in_kmeans[i*j][0] = i;
+        in_kmeans[i*j][1] = j;
+        in_kmeans[i*j][2] = output.at<uchar>(i,j);
+    }
+}
+cout << in_kmeans[10][0]<<in_kmeans[10][1]<<endl;
+cout<<in_kmeans[10][2]<<endl;
+
+// Now we apply K means on the in_kmeans array
+/*int labelarray[totcols*totrows] ;
+double centers[2][3] ;
+kmeans(in_kmeans,2,labelarray,TermCriteria( CV_TERMCRIT_EPS+CV_TERMCRIT_ITER, 10, 1.0), 3, KMEANS_PP_CENTERS,centers);
+
+Mat thresholded = img_input;
+
+for(int i=0;i<totrows;i++){
+    for (int j = 0; j < totcols; j++){
+        if(labelarray[i*j] == 0){
+            thresholded.at<uchar>(i,j) = 0;
+        }
+        else {thresholded.at<uchar>(i,j) = 255;}
+    }
+}
+*/
+waitKey(0);
+return 0;
+}*/
